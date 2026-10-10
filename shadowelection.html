@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow Election - Secure Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .hidden-view { display: none !important; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 32px; height: 32px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <div id="init-screen" class="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
+        <div class="loader mb-4"></div>
+        <p id="init-message" class="text-slate-500 font-medium tracking-wide">Securing connection...</p>
+    </div>
+
+    <nav class="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center font-bold text-xl tracking-tight">
+                <i class="fa-solid fa-shield-halved text-blue-500 mr-2"></i> Shadow Election
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm bg-slate-800 px-3 py-1.5 rounded-full flex items-center hidden" id="nav-user-badge">
+                    <i class="fa-solid fa-mobile-screen mr-2 text-slate-400"></i>
+                    <span id="nav-userid" class="font-mono text-blue-400 font-bold"></span>
+                </div>
+                <button id="btn-show-admin" class="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded transition">Admin Login</button>
+                <button id="btn-logout" class="hidden-view text-sm bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded transition">Disconnect</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6" id="app-container">
+        
+        <!-- SECURE Admin Login View -->
+        <div id="view-admin-login" class="hidden-view max-w-md mx-auto mt-12 bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-2xl font-bold mb-6 text-center text-slate-800">Admin Portal</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Admin Email</label>
+                    <input type="email" id="admin-email" class="w-full border border-slate-300 rounded-lg px-4 py-2 bg-slate-50">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                    <input type="password" id="admin-pass" class="w-full border border-slate-300 rounded-lg px-4 py-2 bg-slate-50">
+                </div>
+                <button id="btn-admin-submit" class="w-full bg-slate-900 text-white font-bold py-2.5 rounded-lg hover:bg-black transition">Authenticate</button>
+                <button id="btn-cancel-admin" class="w-full text-sm text-slate-500 mt-2 hover:text-slate-800">Return to Voter Booth</button>
+            </div>
+        </div>
+
+        <div id="view-voter" class="hidden-view">
+            <div class="mb-6">
+                <h1 class="text-3xl font-bold text-slate-900">Active Elections</h1>
+                <p class="text-slate-600 mt-1">Select an election below. You are securely restricted to one vote per device.</p>
+            </div>
+            <div id="voter-elections-list" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+        </div>
+
+        <div id="view-admin" class="hidden-view">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8 flex flex-col md:flex-row gap-4 items-end">
+                <div class="flex-1">
+                    <label class="block text-sm font-bold text-slate-700 mb-1">New Election Title</label>
+                    <input type="text" id="new-election-title" placeholder="e.g., General Election 2026" class="w-full border border-slate-300 rounded-lg px-4 py-2">
+                </div>
+                <div class="flex-1">
+                    <label class="block text-sm font-bold text-slate-700 mb-1">Candidates (comma separated)</label>
+                    <input type="text" id="new-election-candidates" placeholder="Candidate A, Candidate B" class="w-full border border-slate-300 rounded-lg px-4 py-2">
+                </div>
+                <button id="btn-create-election" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 h-10">Launch Election</button>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-900 mb-4">Live Results Telemetry</h2>
+            <div id="admin-charts-list" class="space-y-6"></div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-app.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js";
+        import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-auth.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-analytics.js";
+
+        // Your specific web app Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyC5rlGGuBNL61saUEjtvopq5iVZCX6V8FQ",
+            authDomain: "shadow-election.firebaseapp.com",
+            projectId: "shadow-election",
+            storageBucket: "shadow-election.firebasestorage.app",
+            messagingSenderId: "240076032540",
+            appId: "1:240076032540:web:c272082d36084c3ac12dd9",
+            measurementId: "G-FX9H74MQFX"
+        };
+
+        let app, db, auth, analytics, deviceFingerprint;
+        let currentUser = null; 
+        let elections = [];
+        let votes = [];
+        let chartInstances = {};
+
+        async function initApp() {
+            try {
+                // Initialize Firebase
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app); 
+                analytics = getAnalytics(app);
+
+                const fpPromise = import('https://openfpcdn.io/fingerprintjs/v4').then(FingerprintJS => FingerprintJS.load());
+                const fp = await fpPromise;
+                const result = await fp.get();
+                deviceFingerprint = result.visitorId;
+
+                const deviceRef = doc(db, 'devices', deviceFingerprint);
+                const deviceSnap = await getDoc(deviceRef);
+
+                if (deviceSnap.exists()) {
+                    currentUser = { voterId: deviceSnap.data().voterId, role: 'voter' };
+                } else {
+                    const newVoterId = 'VOTER-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+                    await setDoc(deviceRef, { voterId: newVoterId, registeredAt: Date.now() });
+                    currentUser = { voterId: newVoterId, role: 'voter' };
+                }
+
+                document.getElementById('nav-user-badge').classList.remove('hidden');
+                document.getElementById('nav-userid').textContent = currentUser.voterId;
+                document.getElementById('init-screen').classList.add('hidden-view');
+                
+                setupRealtimeListeners();
+                renderView('voter');
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById('init-message').innerHTML = '<span class="text-red-500 font-bold mt-2 text-center block">Connection Failed. Please test via Vercel.</span>';
+            }
+        }
+
+        function renderView(viewMode) {
+            document.getElementById('view-voter').classList.add('hidden-view');
+            document.getElementById('view-admin').classList.add('hidden-view');
+            document.getElementById('view-admin-login').classList.add('hidden-view');
+            
+            const adminBtn = document.getElementById('btn-show-admin');
+            const logoutBtn = document.getElementById('btn-logout');
+
+            if (viewMode === 'voter') {
+                document.getElementById('view-voter').classList.remove('hidden-view');
+                adminBtn.classList.remove('hidden-view');
+                logoutBtn.classList.add('hidden-view');
+                renderVoterDashboard();
+            } else if (viewMode === 'admin-login') {
+                document.getElementById('view-admin-login').classList.remove('hidden-view');
+                adminBtn.classList.add('hidden-view');
+                logoutBtn.classList.add('hidden-view');
+            } else if (viewMode === 'admin') {
+                document.getElementById('view-admin').classList.remove('hidden-view');
+                adminBtn.classList.add('hidden-view');
+                logoutBtn.classList.remove('hidden-view');
+                renderAdminDashboard();
+            }
+        }
+
+        document.getElementById('btn-show-admin').addEventListener('click', () => renderView('admin-login'));
+        document.getElementById('btn-cancel-admin').addEventListener('click', () => renderView('voter'));
+        
+        document.getElementById('btn-logout').addEventListener('click', async () => {
+            if (currentUser.role === 'admin') {
+                await signOut(auth);
+            }
+            currentUser.role = 'voter'; 
+            renderView('voter');
+        });
+
+        document.getElementById('btn-admin-submit').addEventListener('click', async () => {
+            const email = document.getElementById('admin-email').value;
+            const pass = document.getElementById('admin-pass').value;
+            
+            try {
+                await signInWithEmailAndPassword(auth, email, pass);
+                currentUser.role = 'admin';
+                document.getElementById('admin-email').value = '';
+                document.getElementById('admin-pass').value = '';
+                renderView('admin');
+            } catch (error) {
+                alert("Login Failed. Please check your credentials.");
+                console.error(error.message);
+            }
+        });
+
+        function setupRealtimeListeners() {
+            onSnapshot(collection(db, 'elections'), (snapshot) => {
+                elections = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                elections.sort((a, b) => b.createdAt - a.createdAt);
+                if(currentUser.role === 'voter') renderVoterDashboard();
+                if(currentUser.role === 'admin') renderAdminDashboard();
+            });
+
+            onSnapshot(collection(db, 'votes'), (snapshot) => {
+                votes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if(currentUser.role === 'voter') renderVoterDashboard();
+                if(currentUser.role === 'admin') updateAdminCharts();
+            });
+        }
+
+        document.getElementById('btn-create-election').addEventListener('click', async () => {
+            const title = document.getElementById('new-election-title').value.trim();
+            const cands = document.getElementById('new-election-candidates').value.split(',').map(c => c.trim()).filter(c => c);
+            if(!title || cands.length < 2) return alert("Title and at least 2 candidates required.");
+
+            const electionId = 'EL_' + Date.now();
+            try {
+                await setDoc(doc(db, 'elections', electionId), {
+                    title: title,
+                    candidates: cands,
+                    createdAt: Date.now()
+                });
+                document.getElementById('new-election-title').value = '';
+                document.getElementById('new-election-candidates').value = '';
+            } catch(e) {
+                alert("Error: You do not have permission to create elections.");
+            }
+        });
+
+        window.castVote = async function(electionId) {
+            const radios = document.getElementsByName(`vote_${electionId}`);
+            let selection = null;
+            radios.forEach(r => { if(r.checked) selection = r.value; });
+            if(!selection) return alert("Please select a candidate.");
+
+            const ballotId = `${electionId}_${deviceFingerprint}`;
+            const voteRef = doc(db, 'votes', ballotId);
+
+            const voteSnap = await getDoc(voteRef);
+            if (voteSnap.exists()) {
+                return alert("Security Block: This device has already cast a ballot in this election.");
+            }
+
+            await setDoc(voteRef, {
+                electionId: electionId,
+                deviceId: deviceFingerprint,
+                voterId: currentUser.voterId,
+                candidate: selection,
+                timestamp: Date.now()
+            });
+        };
+
+        function renderVoterDashboard() {
+            const container = document.getElementById('voter-elections-list');
+            if (elections.length === 0) {
+                container.innerHTML = `<div class="col-span-full p-8 bg-white rounded-2xl shadow-sm text-center text-slate-500">No active elections found.</div>`;
+                return;
+            }
+
+            let html = '';
+            elections.forEach(election => {
+                const totalVotes = votes.filter(v => v.electionId === election.id).length;
+                const userVote = votes.find(v => v.electionId === election.id && v.deviceId === deviceFingerprint);
+
+                html += `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+                            <div class="p-6 border-b border-slate-100 flex-1">
+                                <h3 class="text-xl font-bold mb-4">${election.title}</h3>`;
+
+                if (userVote) {
+                    html += `<div class="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg font-medium text-center">
+                                <i class="fa-solid fa-circle-check mr-2"></i> You voted for <b>${userVote.candidate}</b>
+                             </div>`;
+                } else {
+                    election.candidates.forEach(cand => {
+                        html += `<label class="flex items-center p-3 border border-slate-200 rounded-lg mb-2 cursor-pointer hover:bg-slate-50">
+                                    <input type="radio" name="vote_${election.id}" value="${cand}" class="w-4 h-4 text-blue-600">
+                                    <span class="ml-3 font-medium">${cand}</span>
+                                 </label>`;
+                    });
+                    html += `<button onclick="castVote('${election.id}')" class="w-full mt-4 bg-slate-900 text-white font-bold py-2 rounded-lg hover:bg-black transition">Submit Ballot securely</button>`;
+                }
+
+                html += `</div>
+                         <div class="bg-slate-50 p-4 text-sm text-slate-500 font-medium"><i class="fa-solid fa-users mr-2"></i>${totalVotes} Total Ballots Cast</div>
+                       </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderAdminDashboard() {
+            const container = document.getElementById('admin-charts-list');
+            container.innerHTML = '';
+            elections.forEach(election => {
+                const div = document.createElement('div');
+                div.className = "bg-white p-6 rounded-2xl shadow-sm border border-slate-200";
+                div.innerHTML = `
+                    <div class="flex justify-between items-end mb-4 border-b border-slate-100 pb-4">
+                        <h3 class="text-xl font-bold">${election.title}</h3>
+                        <span class="text-sm text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded">ID: ${election.id}</span>
+                    </div>
+                    <div class="h-64 relative w-full"><canvas id="chart_${election.id}"></canvas></div>
+                `;
+                container.appendChild(div);
+            });
+            updateAdminCharts();
+        }
+
+        function updateAdminCharts() {
+            if (currentUser.role !== 'admin') return;
+            elections.forEach(election => {
+                const canvas = document.getElementById(`chart_${election.id}`);
+                if (!canvas) return;
+                const electionVotes = votes.filter(v => v.electionId === election.id);
+                const dataCounts = election.candidates.map(candidate => electionVotes.filter(v => v.candidate === candidate).length);
+
+                if (chartInstances[election.id]) {
+                    chartInstances[election.id].data.datasets[0].data = dataCounts;
+                    chartInstances[election.id].update();
+                } else {
+                    chartInstances[election.id] = new Chart(canvas.getContext('2d'), {
+                        type: 'bar',
+                        data: {
+                            labels: election.candidates,
+                            datasets: [{
+                                label: 'Votes Cast',
+                                data: dataCounts,
+                                backgroundColor: '#3b82f6',
+                                borderRadius: 4
+                            }]
+                        },
+                        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+                    });
+                }
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
